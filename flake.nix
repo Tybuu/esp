@@ -1,6 +1,6 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/25.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     rust-overlay.url = "github:oxalica/rust-overlay";
   };
 
@@ -36,15 +36,15 @@
     };
     espflash = pkgs.rustPlatform.buildRustPackage rec {
       pname = "espflash";
-      version = "4.3.0";
+      version = "4.5.0";
 
       src = pkgs.fetchCrate {
         inherit pname version;
 
-        sha256 = "sha256-V6SfKKHf+Wx/BvxIJetEjQzZzjVMpjbiQ/coA+lYBQY=";
+        sha256 = "sha256-Uz5zqbEyMeHuRSQZSC9xKK4yCvKnG5c14MHOgUfyrj4=";
       };
       cargoBuildFlags = ["--locked"];
-      cargoHash = "sha256-VRXx9b/Pr6Kcmty/HrKZdtOO/gBqidJvDU8osdaEYvY=";
+      cargoHash = "sha256-QcvPdI0WeM/a6KZM4hRd2gFg8jmqSOzQtXFfyAMtxo8=";
       doCheck = false;
     };
     customEspRust = pkgs.stdenv.mkDerivation {
