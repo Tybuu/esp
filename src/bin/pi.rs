@@ -10,10 +10,21 @@
 use defmt::Format;
 use defmt::info;
 use embassy_executor::Spawner;
+use embassy_futures::join::join;
 use embassy_time::{Duration, Timer};
+use esp_hal::dma::DmaRxBuf;
+use esp_hal::dma_buffers;
+use esp_hal::dma_tx_buffer;
 use esp_hal::gpio;
+use esp_hal::gpio::Input;
+use esp_hal::gpio::InputConfig;
 use esp_hal::gpio::Output;
+use esp_hal::gpio::OutputConfig;
+use esp_hal::peripherals;
+use esp_hal::spi::master::Spi;
+use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
+use esp_hal::uart::Uart;
 use esp_hal::{clock::CpuClock, interrupt::software::SoftwareInterrupt};
 use heapless::Vec;
 use {esp_backtrace as _, esp_println as _};
@@ -27,7 +38,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
     reason = "it's not unusual to allocate larger buffers etc. in main"
 )]
 #[esp_rtos::main]
-async fn main(spawner: Spawner) -> ! {
+async fn main(spawner: Spawner) {
     // generator version: 1.1.0
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
@@ -45,43 +56,116 @@ async fn main(spawner: Spawner) -> ! {
         .into_async()
         .with_rx(peripherals.GPIO16)
         .with_tx(peripherals.GPIO17);
-    // TODO: Spawn some tasks
+
+    let mut hid_uart = Uart::new(
+        peripherals.UART2,
+        esp_hal::uart::Config::default().with_baudrate(3_000_000),
+    )
+    .unwrap()
+    .into_async()
+    .with_rx(peripherals.GPIO10)
+    .with_tx(peripherals.GPIO11);
+
+    let mut input = Input::new(
+        peripherals.GPIO12,
+        InputConfig::default().with_pull(gpio::Pull::Down),
+    );
+
     let _ = spawner;
-    let mut buf: Vec<u8, 2048> = heapless::Vec::new();
-    loop {
-        let mut tmp = [0u8; 1];
-        match uart.read_exact_async(&mut tmp).await {
-            Ok(_) => {
-                if tmp[0] as char == '\n' {
-                    match str::from_utf8(&buf) {
-                        Ok(str) => {
-                            esp_println::println!("{}", str);
-                            // info!("{}", str)
+    let (mut rx, _) = uart.split();
+    let uart_task = async {
+        let mut buf: Vec<u8, 2048> = heapless::Vec::new();
+        loop {
+            let mut tmp = [0u8; 1];
+            match rx.read_exact_async(&mut tmp).await {
+                Ok(_) => {
+                    if tmp[0] as char == '\n' {
+                        match str::from_utf8(&buf) {
+                            Ok(str) => {
+                                esp_println::println!("{}", str);
+                                // info!("{}", str)
+                            }
+                            Err(err) => {
+                                defmt::error!("Failed at {}", &err.valid_up_to());
+                            }
                         }
-                        Err(err) => {
-                            defmt::error!("Failed at {}", &err.valid_up_to());
+                        buf.clear();
+                    } else if buf.push(tmp[0]).is_err() {
+                        match str::from_utf8(&buf) {
+                            Ok(str) => {
+                                esp_println::println!("{}", str);
+                                // info!("{}", str)
+                            }
+                            Err(err) => {
+                                defmt::error!("Failed at {}", &err.valid_up_to());
+                            }
                         }
+                        buf.clear();
                     }
-                    buf.clear();
-                } else if buf.push(tmp[0]).is_err() {
-                    match str::from_utf8(&buf) {
-                        Ok(str) => {
-                            esp_println::println!("{}", str);
-                            // info!("{}", str)
-                        }
-                        Err(err) => {
-                            defmt::error!("Failed at {}", &err.valid_up_to());
-                        }
-                    }
+                }
+                Err(err) => {
+                    defmt::error!("Uart Error: {}", err);
                     buf.clear();
                 }
             }
-            Err(err) => {
-                defmt::error!("Uart Error: {}", err);
-                buf.clear();
-            }
         }
-    }
+    };
+    let spi_task = async {
+        let (mut rx, mut tx) = hid_uart.split();
+        let read_task = async {
+            let mut state = ReadState::Header1;
+            let mut buffer = [0u8; 32];
+            loop {
+                match state {
+                    ReadState::Header1 => {
+                        if rx.read_async(&mut buffer[..1]).await.is_ok() && buffer[0] == 0xA5 {
+                            esp_println::println!("[ESP UART RX] HEADER1 Received");
+                            state = ReadState::Header2;
+                        }
+                    }
+                    ReadState::Header2 => {
+                        if rx.read_async(&mut buffer[..1]).await.is_ok() && buffer[0] == 0x55 {
+                            esp_println::println!("[ESP UART RX] HEADER2 Received");
+                            state = ReadState::Payload;
+                        }
+                    }
+                    ReadState::Payload => {
+                        if rx.read_exact_async(&mut buffer).await.is_ok() {
+                            esp_println::println!("[ESP UART RX] {:?}", buffer);
+                        }
+                        state = ReadState::Header1;
+                    }
+                }
+            }
+        };
+        let write_task = async {
+            let mut buffer = [0u8; 34];
+            buffer[0] = 0xA5;
+            buffer[1] = 0x55;
+            buffer[2] = 0x72;
+            buffer[3..]
+                .iter_mut()
+                .enumerate()
+                .for_each(|(i, x)| *x = i as u8);
+            loop {
+                input.wait_for_high().await;
+                let _ = tx.write_async(&buffer).await;
+                esp_println::println!("[ESP UART TX] Wrote {:?}", buffer);
+                // buffer[2] = if buffer[2] == 0x72 { 0x42 } else { 0x72 };
+                // buffer[3..]
+                //     .iter_mut()
+                //     .for_each(|x| *x = x.overflowing_add(1).0);
+                //
+                Timer::after_secs(2).await;
+            }
+        };
+        join(read_task, write_task).await;
+    };
+    join(uart_task, spi_task).await;
+}
 
-    // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v~1.0/examples
+enum ReadState {
+    Header1,
+    Header2,
+    Payload,
 }

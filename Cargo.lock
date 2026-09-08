@@ -56,6 +56,7 @@ dependencies = [
  "critical-section",
  "defmt 1.0.1",
  "embassy-executor",
+ "embassy-futures",
  "embassy-time",
  "esp-backtrace",
  "esp-bootloader-esp-idf",
