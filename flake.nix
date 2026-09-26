@@ -64,7 +64,7 @@
             else
               pkgs.fetchurl {
                 url = "https://github.com/esp-rs/rust-build/releases/download/v1.98.0.0/rust-1.98.0.0-x86_64-unknown-linux-gnu.tar.xz";
-                hash = "";
+                hash = "sha256-psPF7NUErUHdDw0vlcthl/lDucAsSO8IiM7cLy4RJ6Y=";
               };
           patchPhase = ''
             patchShebangs ./install.sh
@@ -106,7 +106,7 @@
             else
               pkgs.fetchurl {
                 url = "https://github.com/espressif/crosstool-NG/releases/download/esp-15.2.0_20250920/xtensa-esp-elf-15.2.0_20250920-x86_64-linux-gnu.tar.xz";
-                hash = "";
+                hash = "sha256-49d60UVEgUUnu+ei0PeexFkqTiM5LFHHOIwOaGtqaXc=";
               };
           nativeBuildInputs = [pkgs.autoPatchelfHook pkgs.zlib pkgs.stdenv.cc.cc];
           installPhase = ''

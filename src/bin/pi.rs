@@ -142,21 +142,15 @@ async fn main(spawner: Spawner) {
             let mut buffer = [0u8; 34];
             buffer[0] = 0xA5;
             buffer[1] = 0x55;
-            buffer[2] = 0x72;
-            buffer[3..]
-                .iter_mut()
-                .enumerate()
-                .for_each(|(i, x)| *x = i as u8);
+            buffer[2] = 0x3;
+            buffer[3] = 1;
+            buffer[4] = 5;
+            buffer[5] = 0;
             loop {
                 input.wait_for_high().await;
-                let _ = tx.write_async(&buffer).await;
-                esp_println::println!("[ESP UART TX] Wrote {:?}", buffer);
-                // buffer[2] = if buffer[2] == 0x72 { 0x42 } else { 0x72 };
-                // buffer[3..]
-                //     .iter_mut()
-                //     .for_each(|x| *x = x.overflowing_add(1).0);
-                //
-                Timer::after_secs(2).await;
+                let _ = tx.write_async(&buffer[0..6]).await;
+                esp_println::println!("[ESP UART TX] Wrote {:?}", &buffer[0..6]);
+                Timer::after_millis(500).await;
             }
         };
         join(read_task, write_task).await;
