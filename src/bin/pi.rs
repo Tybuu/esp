@@ -7,6 +7,7 @@
 )]
 #![deny(clippy::large_stack_frames)]
 
+use crate::ReadState::Header1;
 use defmt::Format;
 use defmt::info;
 use embassy_executor::Spawner;
@@ -27,6 +28,7 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_hal::uart::Uart;
 use esp_hal::{clock::CpuClock, interrupt::software::SoftwareInterrupt};
 use heapless::Vec;
+
 use {esp_backtrace as _, esp_println as _};
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
@@ -114,7 +116,8 @@ async fn main(spawner: Spawner) {
         let (mut rx, mut tx) = hid_uart.split();
         let read_task = async {
             let mut state = ReadState::Header1;
-            let mut buffer = [0u8; 32];
+            let mut buffer = [0u8; 256];
+            let mut len = 0;
             loop {
                 match state {
                     ReadState::Header1 => {
@@ -126,12 +129,28 @@ async fn main(spawner: Spawner) {
                     ReadState::Header2 => {
                         if rx.read_async(&mut buffer[..1]).await.is_ok() && buffer[0] == 0x55 {
                             esp_println::println!("[ESP UART RX] HEADER2 Received");
-                            state = ReadState::Payload;
+                            state = ReadState::Len;
+                        } else if buffer[0] == 0xA5 {
+                            state = ReadState::Header2;
                         }
                     }
+                    ReadState::Len => {
+                        if rx.read_async(&mut buffer[..1]).await.is_ok() {
+                            esp_println::println!("[ESP UART RX] Len Received: {}", buffer[0]);
+                            len = buffer[0];
+                            state = ReadState::Payload;
+                        } else {
+                            state = Header1;
+                        }
+                    }
+
                     ReadState::Payload => {
-                        if rx.read_exact_async(&mut buffer).await.is_ok() {
-                            esp_println::println!("[ESP UART RX] {:?}", buffer);
+                        if rx
+                            .read_exact_async(&mut buffer[..(len as usize)])
+                            .await
+                            .is_ok()
+                        {
+                            esp_println::println!("[ESP UART RX] {:?}", &buffer[..(len as usize)]);
                         }
                         state = ReadState::Header1;
                     }
@@ -161,5 +180,6 @@ async fn main(spawner: Spawner) {
 enum ReadState {
     Header1,
     Header2,
+    Len,
     Payload,
 }
